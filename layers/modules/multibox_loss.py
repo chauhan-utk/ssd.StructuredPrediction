@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from data import v2 as cfg
-from .j_loss import JCLoss
 from ..box_utils import match, log_sum_exp
 
 class MultiBoxLoss(nn.Module):
@@ -44,7 +42,6 @@ class MultiBoxLoss(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = cfg['variance']
-        self.jc = JCLoss()
 
     def forward(self, predictions, targets):
         """Multibox Loss
@@ -88,10 +85,7 @@ class MultiBoxLoss(nn.Module):
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
         loc_p = loc_data[pos_idx].view(-1, 4)
         loc_t = loc_t[pos_idx].view(-1, 4)
-        #loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
-        # try a different type of loss function
-        loss_l = self.jc(loc_p,loc_t)
-        print(" localization loss: ",loss_l.data)
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
 
         # Compute max conf across batch for hard negative mining
         batch_conf = conf_data.view(-1, self.num_classes)
@@ -110,13 +104,8 @@ class MultiBoxLoss(nn.Module):
         # Confidence Loss Including Positive and Negative Examples
         pos_idx = pos.unsqueeze(2).expand_as(conf_data)
         neg_idx = neg.unsqueeze(2).expand_as(conf_data)
-        pos_mask = (pos_idx+neg_idx).gt(0)
-        conf_p = torch.masked_select(conf_data,pos_mask)
-        conf_p = conf_p.view(-1, num_classes)
-        #conf_p = conf_data[(pos_idx+neg_idx).gt(0)].view(-1, self.num_classes)
-        targets_wt_mask = (pos+neg).gt(0)
-        targets_weighted = torch.masked_select(conf_t,targets_wt_mask)
-        #targets_weighted = conf_t[(pos+neg).gt(0)]
+        conf_p = conf_data[(pos_idx+neg_idx).gt(0)].view(-1, self.num_classes)
+        targets_weighted = conf_t[(pos+neg).gt(0)]
         loss_c = F.cross_entropy(conf_p, targets_weighted, size_average=False)
 
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N

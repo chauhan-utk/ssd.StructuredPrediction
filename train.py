@@ -1,4 +1,4 @@
-import os
+    import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -56,7 +56,7 @@ num_classes = len(VOC_CLASSES) + 1
 batch_size = args.batch_size
 accum_batch_size = 32
 iter_size = accum_batch_size / batch_size
-max_iter = 120000
+max_iter = args.iterations
 weight_decay = 0.0005
 stepvalues = (80000, 100000, 120000)
 gamma = 0.1

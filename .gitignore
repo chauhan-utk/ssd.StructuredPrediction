@@ -104,7 +104,7 @@ dev.ipynb
 .vscode/
 
 # not ready
-run_[a-z]*[0-9]*.sh
+run_[a-z]*.sh
 videos/
 templates/
 data/ssd_dataloader.py

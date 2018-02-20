@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from data import v2 as cfg
-from ..box_utils import match, log_sum_exp
+from ..box_utils import match, log_sum_exp, loss_aug_infer_loss, rematch
+from boxloss import BoxLoss
 
 
 class MultiBoxLoss(nn.Module):
@@ -43,6 +44,9 @@ class MultiBoxLoss(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = cfg['variance']
+        self.epsilon = 0.1
+        self.positive = True
+        self.boxloss = BoxLoss()
 
     def forward(self, predictions, targets):
         """Multibox Loss
@@ -65,15 +69,31 @@ class MultiBoxLoss(nn.Module):
         # match priors (default boxes) and ground truth boxes
         loc_t = torch.Tensor(num, num_priors, 4)
         conf_t = torch.LongTensor(num, num_priors)
+        # remove encoding from predicted boxes
+        loc_data_decoded = torch.Tensor(num, num_priors, 4)
+        y_direct = torch.Tensor(num, num_priors, 4)
+        y_direct_conf = torch.LongTensor(num, num_priors)
+
         for idx in range(num):
             truths = targets[idx][:, :-1].data
             labels = targets[idx][:, -1].data
             defaults = priors.data
             match(self.threshold, truths, defaults, self.variance, labels,
                   loc_t, conf_t, idx)
+            loc_data_decoded[idx] = decode(loc_data[idx], defaults, self.variance)
+            aug_loss = loss_aug_infer_loss(truths, labels, loc_data_decoded[idx], conf_data[idx])
+            assert(overlaps_intr.size() == aug_loss.size()),"Expected same size got %s and %s" % (str(overlaps_intr.size()), str(aug_loss.size()))
+            overlaps_intr = None # intermediate overlap values
+            if self.positive:
+                overlaps_intr = overlaps_intr + self.epsilon * aug_loss
+            else:
+                overlaps_intr = overlaps_intr - self.epsilon * aug_loss
+            rematch(self.threshold, truths, defaults, labels, y_direct, y_direct_conf, overlaps_intr, idx)
+
         if self.use_gpu:
             loc_t = loc_t.cuda()
             conf_t = conf_t.cuda()
+
         # wrap targets
         loc_t = Variable(loc_t, requires_grad=False)
         conf_t = Variable(conf_t, requires_grad=False)
@@ -81,13 +101,37 @@ class MultiBoxLoss(nn.Module):
         pos = conf_t > 0
         num_pos = pos.sum(dim=1, keepdim=True)
 
-        # Localization Loss (Smooth L1)
-        # Shape: [batch,num_priors,4]
-        pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
-        loc_p = loc_data[pos_idx].view(-1, 4)
-        loc_t = loc_t[pos_idx].view(-1, 4)
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
+        loc_t_classes = conf_t[pos] # [bbox without background label]
 
+        # get predicted class for each prior box
+        # class are 0 - 19 (need to confirm)
+        pos_idx_class = pos.unsqueeze(pos.dim()).expand_as(conf_data)
+        loc_p_classes = conf_data[pos_idx_class].view(-1, self.num_classes)
+        # loc_p_classes, _ = loc_p_classes.max(1)
+        _, loc_p_classes = loc_p_classes.max(1) # torch.LongTensor
+        loc_p_classes = 1 + loc_p_classes # check box_utils.py:L120
+
+        # Shape: [batch,num_priors,4]
+        pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data_decoded)
+        loc_p = loc_data_decoded[pos_idx].view(-1, 4)
+        loc_t = loc_t[pos_idx].view(-1, 4)
+
+        # loss augmented inference calculation
+        pos_y = y_direct_conf > 0
+        pos_y_idx = pos_y.unsqueeze(pos_y.dim()).expand_as(loc_data_decoded)
+        loc_p_infr = loc_data_decoded[pos_y_idx].view(-1,4)
+
+        if self.use_gpu:
+            loc_p_classes = loc_p_classes.cuda()
+            loc_t_classes = loc_t_classes.cuda()
+            loc_p_infr = loc_p_infr.cuda()
+        loc_p_classes = Variable(loc_p_classes, requires_grad=False)
+        loc_t_classes = Variable(loc_t_classes, requires_grad=False)
+        loc_p_infr = Variable(loc_p_infr, requires_grad=False)
+        self.boxloss.setdata(self.epsilon, self.positive, loc_p_infr) # set for backward
+
+        loss_l = self.boxloss.apply((loc_p, loc_p_classes, loc_t, loc_t_classes))
+        # loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
         # Compute max conf across batch for hard negative mining
         batch_conf = conf_data.view(-1, self.num_classes)
 

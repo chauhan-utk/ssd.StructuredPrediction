@@ -66,6 +66,31 @@ def jaccard(box_a, box_b):
     union = area_a + area_b - inter
     return inter / union  # [A,B]
 
+def loss_aug_infer_loss(box_truths, labels_truths, box_preds, labels_preds):
+    """
+    Compute the task loss for every prior box and ground truth overlap
+    Args:
+        box_pred shape: torch.size(num_obj, 4)
+        labels_truths shape: torch.size(num_obj, 1)
+        box_priors shape: torch.size(num_priors, 4)
+        labels_preds shape: torch.size(num_priors, num_classes)
+    Returns:
+        overlaps shape : torch.size(num_obj, num_priors)
+    """
+    assert(box_truths.size(1) == box_preds.size(1)),"Expected 4 but got %d and %d sizes" % (box_truths.size(1), box_preds.size(1))
+    _, labels_preds = labels_preds.max(1) # torch.LongTensor
+    # classes : [0-19]
+    overlaps = jaccard(box_truths, box_preds)
+    assert(overlaps.size(0) == labels_truths.size(0)), "Expected equal gt boxes and labels sizes but got %d gt box and %d labels" % (overlaps.size(0), labels_truths.size(0))
+    assert(overlaps.size(1) == labels_preds.size(0)), "Expected equal but got %d pred boxes and %d pred labels" % (overlaps.size(1), labels_preds.size(0))
+    # TODO: vectorize if code working correctly
+    for i in range(overlaps.size(0)):
+        for j in range(overlaps.size(1)):
+            if labels_truths[i] == labels_preds[j]:
+                overlaps[i][j] = 1 - overlaps[i][j]
+            else:
+                overlaps[i][j] = 1
+    return overlaps
 
 def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     """Match each prior box with the ground truth box of the highest jaccard
@@ -89,6 +114,7 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
         truths,
         point_form(priors)
     )
+    overlaps_intr = overlaps # Shape: [num_objects, num_priors]
     # (Bipartite Matching)
     # [num_objects, 1] best prior for each ground truth
     best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
@@ -102,6 +128,7 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     best_truth_overlap.index_fill_(0, best_prior_idx, 2)  # ensure best prior
     # TODO refactor: index  best_prior_idx with long tensor
     # ensure every gt matches with its prior of max overlap
+
     for j in range(best_prior_idx.size(0)):
         best_truth_idx[best_prior_idx[j]] = j
     # broadcasting to [num_priors] size
@@ -111,6 +138,34 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     loc = encode(matches, priors, variances)
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
+
+def rematch(self, threshold, truths, priors, labels, y_direct, y_direct_conf, overlaps, idx):
+    """
+    inference for augmented overlap values
+    """
+    # (Bipartite Matching)
+    # [num_objects, 1] best prior for each ground truth
+    best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
+    # [1,num_priors] best ground truth for each prior
+    best_truth_overlap, best_truth_idx = overlaps.max(0, keepdim=True)
+    best_truth_idx.squeeze_(0)
+    best_truth_overlap.squeeze_(0)
+    best_prior_idx.squeeze_(1)
+    best_prior_overlap.squeeze_(1)
+    # best_prior_idx -> best prior out of 8732
+    # TODO: check this line
+    best_truth_overlap.index_fill_(0, best_prior_idx, 2)  # ensure best prior
+    # ensure every gt matches with its prior of max overlap
+
+    for j in range(best_prior_idx.size(0)):
+        best_truth_idx[best_prior_idx[j]] = j
+    # broadcasting to [num_priors] size
+    matches = truths[best_truth_idx]          # Shape: [num_priors,4]
+    conf = labels[best_truth_idx] + 1         # Shape: [num_priors]
+    conf[best_truth_overlap < threshold] = 0  # label as background
+    loc = matches
+    y_direct[idx] = loc    # [num_priors,4]
+    y_direct_conf[idx] = conf  # [num_priors] top class label for each prior
 
 
 def encode(matched, priors, variances):

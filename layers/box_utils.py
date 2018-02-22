@@ -71,25 +71,26 @@ def loss_aug_infer_loss(box_truths, labels_truths, box_preds, labels_preds):
     Compute the task loss for every prior box and ground truth overlap
     Args:
         box_pred shape: torch.size(num_obj, 4)
-        labels_truths shape: torch.size(num_obj, 1)
+        labels_truths shape: torch.size(num_obj, 1) class [0-19]
         box_priors shape: torch.size(num_priors, 4)
-        labels_preds shape: torch.size(num_priors, num_classes)
+        labels_preds shape: torch.size(num_priors, num_classes) class [0-20]
     Returns:
         overlaps shape : torch.size(num_obj, num_priors)
     """
     assert(box_truths.size(1) == box_preds.size(1)),"Expected 4 but got %d and %d sizes" % (box_truths.size(1), box_preds.size(1))
     _, labels_preds = labels_preds.max(1) # torch.LongTensor
-    # classes : [0-19]
+    # classes : [1-20]
     overlaps = jaccard(box_truths, box_preds)
     assert(overlaps.size(0) == labels_truths.size(0)), "Expected equal gt boxes and labels sizes but got %d gt box and %d labels" % (overlaps.size(0), labels_truths.size(0))
     assert(overlaps.size(1) == labels_preds.size(0)), "Expected equal but got %d pred boxes and %d pred labels" % (overlaps.size(1), labels_preds.size(0))
-    # TODO: vectorize if code working correctly
+    # TODO: vectorize code
     for i in range(overlaps.size(0)):
+        tmp = labels_truths[i] + 1
         for j in range(overlaps.size(1)):
-            if labels_truths[i] == labels_preds[j]:
-                overlaps[i][j] = 1 - overlaps[i][j]
+            if (tmp == labels_preds[j]).all():
+                overlaps[i][j] = 1. - overlaps[i][j]
             else:
-                overlaps[i][j] = 1
+                overlaps[i][j] = 1.
     return overlaps
 
 def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
@@ -135,11 +136,12 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     matches = truths[best_truth_idx]          # Shape: [num_priors,4]
     conf = labels[best_truth_idx] + 1         # Shape: [num_priors]
     conf[best_truth_overlap < threshold] = 0  # label as background
-    loc = encode(matches, priors, variances)
-    loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
+    # loc = encode(matches, priors, variances)
+    loc_t[idx] = matches    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
+    return overlaps_intr
 
-def rematch(self, threshold, truths, priors, labels, y_direct, y_direct_conf, overlaps, idx):
+def rematch(threshold, truths, priors, labels, y_direct, y_direct_conf, overlaps, idx):
     """
     inference for augmented overlap values
     """

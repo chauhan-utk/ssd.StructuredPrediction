@@ -93,11 +93,13 @@ class MultiBoxLoss(nn.Module):
         if self.use_gpu:
             loc_t = loc_t.cuda()
             conf_t = conf_t.cuda()
+            y_direct_conf = y_direct_conf.cuda()
             loc_data_decoded = loc_data_decoded.cuda()
 
         # wrap targets
         loc_t = Variable(loc_t, requires_grad=False)
         conf_t = Variable(conf_t, requires_grad=False)
+        y_direct_conf = Variable(y_direct_conf, requires_grad=False)
         loc_data_decoded = Variable(loc_data_decoded, requires_grad=False)
 
         pos = conf_t > 0

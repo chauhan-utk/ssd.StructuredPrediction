@@ -80,14 +80,16 @@ def loss_aug_infer_loss(box_truths, labels_truths, box_preds, labels_preds):
     assert(box_truths.size(1) == box_preds.size(1)),"Expected 4 but got %d and %d sizes" % (box_truths.size(1), box_preds.size(1))
     _, labels_preds = labels_preds.max(1) # torch.LongTensor
     # classes : [1-20]
+    labels_preds = labels_preds.data
     overlaps = jaccard(box_truths, box_preds)
     assert(overlaps.size(0) == labels_truths.size(0)), "Expected equal gt boxes and labels sizes but got %d gt box and %d labels" % (overlaps.size(0), labels_truths.size(0))
     assert(overlaps.size(1) == labels_preds.size(0)), "Expected equal but got %d pred boxes and %d pred labels" % (overlaps.size(1), labels_preds.size(0))
     # TODO: vectorize code
+    labels_truths = labels_truths + 1
+    labels_truths = labels_truths.long()
     for i in range(overlaps.size(0)):
-        tmp = labels_truths[i] + 1
         for j in range(overlaps.size(1)):
-            if (tmp == labels_preds[j]).all():
+            if labels_truths[i] == labels_preds[j]:
                 overlaps[i][j] = 1. - overlaps[i][j]
             else:
                 overlaps[i][j] = 1.

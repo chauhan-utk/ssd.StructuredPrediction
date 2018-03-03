@@ -187,9 +187,9 @@ def train():
         t1 = time.time()
         loc_loss += loss_l.data[0]
         conf_loss += loss_c.data[0]
-        if iteration % 10 == 0:
+        if iteration % 5 == 0:
             print('Timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+            print('iter ' + repr(iteration) + ' || loss_l: %.4f || loss_c: %.4f || Loss: %.4f ||' % (loss_l.data[0], loss_c.data[0], loss.data[0]), end=' ')
             if args.visdom and args.send_images_to_visdom:
                 random_batch_index = np.random.randint(images.size(0))
                 viz.image(images.data[random_batch_index].cpu().numpy())
